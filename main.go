@@ -1,13 +1,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	// "encoding/hex"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"io"
 
 	"github.com/tsuna/gohbase"
-	"github.com/tsuna/gohbase/filter"
+	// "github.com/tsuna/gohbase/filter"
 	"github.com/tsuna/gohbase/hrpc"
 )
 
@@ -17,18 +19,24 @@ func main() {
 	client = gohbase.NewClient("ny-tsdb01")
 	getMetrics()
 
-	return
-	pFilter := filter.NewPrefixFilter([]byte("0"))
+	startKey, stopKey := getRangeKeys("os.net.bytes", 1497387618, 1497480000)
+
+	// pFilter := filter.NewPrefixFilter([]byte("0"))
 	// family := map[string][]string{"cf": []string{"t"}}
 	// pFilter = nil
 
-	maxSize := hrpc.MaxResultSize(10)
-	scanRequest, _ := hrpc.NewScanStr(context.Background(), "tsdb", hrpc.Filters(pFilter), maxSize)
+	scanRequest, _ := hrpc.NewScanRange(context.Background(), []byte("tsdb"), startKey, stopKey)
 	scanRsp := client.Scan(scanRequest)
 
-	data, _ := scanRsp.Next()
-
-	fmt.Println(data)
+	for {
+		row, err := scanRsp.Next()
+		if err == io.EOF {
+			break
+		}
+		for _, cell := range row.Cells {
+			fmt.Println(hex.Dump(cell.Row))
+		}
+	}
 
 }
 
@@ -37,7 +45,6 @@ var tagks map[string][]byte = make(map[string][]byte)
 var tagvs map[string][]byte = make(map[string][]byte)
 
 func getMetrics() {
-	// maxSize := hrpc.NumberOfRows(10)
 	family := map[string][]string{"name": []string{"metrics", "tagk", "tagv"}}
 	families := hrpc.Families(family)
 	scanRequest, _ := hrpc.NewScanStr(context.Background(), "tsdb-uid", families)
@@ -64,4 +71,29 @@ func getMetrics() {
 	for k, _ := range metrics {
 		fmt.Println(k)
 	}
+}
+
+func baseTimestamp(ts int) int {
+	return ts - (ts % 3600)
+}
+
+func timestampBytes(ts int) []byte {
+	bs := make([]byte, 4)
+	binary.BigEndian.PutUint32(bs, uint32(ts))
+	return bs
+}
+
+func getRangeKeys(metric string, start int, stop int) ([]byte, []byte) {
+	var startKey bytes.Buffer
+	var stopKey bytes.Buffer
+
+	startKey.Write(metrics[metric])
+	stopKey.Write(metrics[metric])
+
+	startTs := timestampBytes(baseTimestamp(start))
+	stopTs := timestampBytes(baseTimestamp(stop))
+	startKey.Write(startTs)
+	stopKey.Write(stopTs)
+
+	return startKey.Bytes(), stopKey.Bytes()
 }
