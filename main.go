@@ -167,7 +167,35 @@ func getMetricId(metric string) ([]byte, error) {
 	family := map[string][]string{"id": []string{"metrics"}}
 	families := hrpc.Families(family)
 
-	getRequest, err := hrpc.NewGetStr(context.Background(), "tsdb-uid", metric, families)
+	id, err := getId(metric, families)
+	return id, err
+}
+
+func getTagkId(tagk string) ([]byte, error) {
+	if id, ok := tagks[tagk]; ok {
+		return id, nil
+	}
+	family := map[string][]string{"id": []string{"tagk"}}
+	families := hrpc.Families(family)
+
+	id, err := getId(tagk, families)
+	return id, err
+}
+
+func getTagvId(tagv string) ([]byte, error) {
+	if id, ok := tagvs[tagv]; ok {
+		return id, nil
+	}
+	family := map[string][]string{"id": []string{"tagv"}}
+	families := hrpc.Families(family)
+
+	id, err := getId(tagv, families)
+	return id, err
+}
+
+func getId(name string, families func(hrpc.Call) error) ([]byte, error) {
+
+	getRequest, err := hrpc.NewGetStr(context.Background(), "tsdb-uid", name, families)
 	if err != nil {
 		return nil, err
 	}
@@ -178,11 +206,10 @@ func getMetricId(metric string) ([]byte, error) {
 	}
 
 	if len(response.Cells) < 1 {
-		return nil, fmt.Errorf("Could not find ID for metric " + metric)
+		return nil, fmt.Errorf("Could not find ID for name " + name)
 	}
 
-	metrics[metric] = response.Cells[0].Value
-	return metrics[metric], nil
+	return response.Cells[0].Value, nil
 }
 
 func getMetrics() {
