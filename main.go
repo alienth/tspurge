@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	// "encoding/hex"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/tsuna/gohbase"
 	// "github.com/tsuna/gohbase/filter"
@@ -78,15 +79,29 @@ func main() {
 
 func purgeMetric(c *cli.Context) error {
 	client = gohbase.NewClient(c.String("host"))
-	getMetrics()
 
-	startKey, stopKey := getRangeKeys(c.Args().Get(0), c.Int("start"), c.Int("end"))
+	metricId, err := getMetricId(c.Args().Get(0))
+	if err != nil {
+		return cli.NewExitError("Error fetching metric ID: "+err.Error(), -1)
+	}
+
+	startBase := baseTimestamp(c.Int("start"))
+	endBase := baseTimestamp(c.Int("end") + 3600)
+	startTs := timestampBytes(startBase)
+	endTs := timestampBytes(endBase)
+
+	fmt.Println(time.Unix(int64(startBase), 0))
+	fmt.Println(time.Unix(int64(endBase), 0))
+	startKey, endKey := getRangeKeys(metricId, startTs, endTs)
 
 	// pFilter := filter.NewPrefixFilter([]byte("0"))
 	// family := map[string][]string{"cf": []string{"t"}}
 	// pFilter = nil
 
-	scanRequest, _ := hrpc.NewScanRange(context.Background(), []byte("tsdb"), startKey, stopKey)
+	scanRequest, err := hrpc.NewScanRange(context.Background(), []byte("tsdb"), startKey, endKey)
+	if err != nil {
+		return cli.NewExitError("Error performing range scan: "+err.Error(), -1)
+	}
 	scanRsp := client.Scan(scanRequest)
 
 	for {
@@ -95,6 +110,8 @@ func purgeMetric(c *cli.Context) error {
 			break
 		}
 		for _, cell := range row.Cells {
+			fmt.Println("Key: " + hex.Dump(cell.Row))
+
 			err = deleteKey(string(cell.Row))
 			if err != nil {
 				return cli.NewExitError("Error deleting row: "+err.Error(), -1)
@@ -120,6 +137,27 @@ func deleteKey(key string) error {
 		return err
 	}
 	return nil
+}
+
+func getMetricId(metric string) ([]byte, error) {
+	family := map[string][]string{"id": []string{"metrics"}}
+	families := hrpc.Families(family)
+
+	getRequest, err := hrpc.NewGetStr(context.Background(), "tsdb-uid", metric, families)
+	if err != nil {
+		return nil, err
+	}
+
+	response, err := client.Get(getRequest)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(response.Cells) < 1 {
+		return nil, fmt.Errorf("Could not find ID for metric " + metric)
+	}
+
+	return response.Cells[0].Value, nil
 }
 
 func getMetrics() {
@@ -158,17 +196,15 @@ func timestampBytes(ts int) []byte {
 	return bs
 }
 
-func getRangeKeys(metric string, start int, stop int) ([]byte, []byte) {
+func getRangeKeys(metricId, start, end []byte) ([]byte, []byte) {
 	var startKey bytes.Buffer
-	var stopKey bytes.Buffer
+	var endKey bytes.Buffer
 
-	startKey.Write(metrics[metric])
-	stopKey.Write(metrics[metric])
+	startKey.Write(metricId)
+	endKey.Write(metricId)
 
-	startTs := timestampBytes(baseTimestamp(start))
-	stopTs := timestampBytes(baseTimestamp(stop))
-	startKey.Write(startTs)
-	stopKey.Write(stopTs)
+	startKey.Write(start)
+	endKey.Write(end)
 
-	return startKey.Bytes(), stopKey.Bytes()
+	return startKey.Bytes(), endKey.Bytes()
 }
