@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/hex"
+	// "encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/tsuna/gohbase"
 	// "github.com/tsuna/gohbase/filter"
+	log "github.com/Sirupsen/logrus"
 	"github.com/tsuna/gohbase/hrpc"
 	"github.com/urfave/cli"
 )
@@ -19,6 +20,7 @@ import (
 var client gohbase.Client
 
 func main() {
+	log.SetLevel(log.WarnLevel)
 	app := cli.NewApp()
 	app.Name = "tspurge"
 
@@ -80,7 +82,8 @@ func main() {
 func purgeMetric(c *cli.Context) error {
 	client = gohbase.NewClient(c.String("host"))
 
-	metricId, err := getMetricId(c.Args().Get(0))
+	metric := c.Args().Get(0)
+	metricId, err := getMetricId(metric)
 	if err != nil {
 		return cli.NewExitError("Error fetching metric ID: "+err.Error(), -1)
 	}
@@ -90,9 +93,16 @@ func purgeMetric(c *cli.Context) error {
 	startTs := timestampBytes(startBase)
 	endTs := timestampBytes(endBase)
 
-	fmt.Println(time.Unix(int64(startBase), 0))
-	fmt.Println(time.Unix(int64(endBase), 0))
 	startKey, endKey := getRangeKeys(metricId, startTs, endTs)
+
+	question := fmt.Sprintf("Will delete all datapoints for metric %s from %s to %s. Confirm?", metric, startBase, endBase)
+	proceed, err := prompt(question)
+	if err != nil {
+		return cli.NewExitError(err, -1)
+	}
+	if !proceed {
+		return cli.NewExitError("Aborting.", -1)
+	}
 
 	// pFilter := filter.NewPrefixFilter([]byte("0"))
 	// family := map[string][]string{"cf": []string{"t"}}
@@ -104,18 +114,21 @@ func purgeMetric(c *cli.Context) error {
 	}
 	scanRsp := client.Scan(scanRequest)
 
+	i := 0
 	for {
 		row, err := scanRsp.Next()
 		if err == io.EOF {
 			break
 		}
 		for _, cell := range row.Cells {
-			fmt.Println("Key: " + hex.Dump(cell.Row))
+			_, ts := parseKey(cell.Row)
 
 			err = deleteKey(string(cell.Row))
 			if err != nil {
 				return cli.NewExitError("Error deleting row: "+err.Error(), -1)
 			}
+			i++
+			fmt.Printf("\r%d rows deleted. Up to %s", i, ts)
 		}
 	}
 
@@ -125,6 +138,12 @@ func purgeMetric(c *cli.Context) error {
 var metrics map[string][]byte = make(map[string][]byte)
 var tagks map[string][]byte = make(map[string][]byte)
 var tagvs map[string][]byte = make(map[string][]byte)
+
+func parseKey(key []byte) (string, time.Time) {
+	ts := binary.BigEndian.Uint32(key[3:7])
+
+	return "", time.Unix(int64(ts), 0)
+}
 
 func deleteKey(key string) error {
 	deleteRequest, err := hrpc.NewDelStr(context.Background(), "tsdb", key, nil)
@@ -140,6 +159,9 @@ func deleteKey(key string) error {
 }
 
 func getMetricId(metric string) ([]byte, error) {
+	if id, ok := metrics[metric]; ok {
+		return id, nil
+	}
 	family := map[string][]string{"id": []string{"metrics"}}
 	families := hrpc.Families(family)
 
@@ -157,7 +179,8 @@ func getMetricId(metric string) ([]byte, error) {
 		return nil, fmt.Errorf("Could not find ID for metric " + metric)
 	}
 
-	return response.Cells[0].Value, nil
+	metrics[metric] = response.Cells[0].Value
+	return metrics[metric], nil
 }
 
 func getMetrics() {
@@ -186,13 +209,14 @@ func getMetrics() {
 	}
 }
 
-func baseTimestamp(ts int) int {
-	return ts - (ts % 3600)
+func baseTimestamp(ts int) time.Time {
+	base := time.Unix(int64(ts), 0)
+	return base.Truncate(time.Duration(time.Hour * 1))
 }
 
-func timestampBytes(ts int) []byte {
+func timestampBytes(ts time.Time) []byte {
 	bs := make([]byte, 4)
-	binary.BigEndian.PutUint32(bs, uint32(ts))
+	binary.BigEndian.PutUint32(bs, uint32(ts.Unix()))
 	return bs
 }
 
@@ -207,4 +231,21 @@ func getRangeKeys(metricId, start, end []byte) ([]byte, []byte) {
 	endKey.Write(end)
 
 	return startKey.Bytes(), endKey.Bytes()
+}
+
+func prompt(question string) (bool, error) {
+	var input string
+	for {
+		fmt.Printf("%s (y/n): ", question)
+		if _, err := fmt.Scanln(&input); err != nil {
+			return false, err
+		}
+		if input == "y" {
+			return true, nil
+		} else if input == "n" {
+			return false, nil
+		} else {
+			fmt.Printf("Invalid input: %s", input)
+		}
+	}
 }
