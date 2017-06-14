@@ -12,12 +12,57 @@ import (
 	"github.com/tsuna/gohbase"
 	// "github.com/tsuna/gohbase/filter"
 	"github.com/tsuna/gohbase/hrpc"
+	"github.com/urfave/cli"
 )
 
 var client gohbase.Client
 
 func main() {
-	client = gohbase.NewClient(os.Args[1])
+	app := cli.NewApp()
+	app.Name = "tspurge"
+
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:  "start, s",
+			Usage: "Start time to delete metrics, in unix epoch time. Will be rounded down to the nearest hour.",
+		},
+		cli.StringFlag{
+			Name:  "end, e",
+			Usage: "End time to delete metrics, in unix epoch time. Will be rounded up to the nearest hour.",
+		},
+		cli.StringFlag{
+			Name:  "host",
+			Usage: "The HBase host.",
+		},
+		cli.StringFlag{
+			Name:  "noop, n",
+			Usage: "Run in no-op mode. Iterate through all of the rows, but don't actually delete them.",
+		},
+	}
+
+	app.Before = func(c *cli.Context) error {
+		if c.String("start") == "" {
+			return cli.NewExitError("Error: you must specify start timestamp", -1)
+		}
+		if c.String("end") == "" {
+			return cli.NewExitError("Error: you must specify start timestamp", -1)
+		}
+		return nil
+	}
+
+	app.ArgsUsage = "<METRIC_NAME>..."
+
+	app.Action = purgeMetric
+
+	err := app.Run(os.Args)
+	if err != nil {
+		fmt.Printf("Error starting app: %s", err)
+	}
+
+}
+
+func purgeMetric(c *cli.Context) {
+	client = gohbase.NewClient(c.String("host"))
 	getMetrics()
 
 	startKey, stopKey := getRangeKeys("test", 1497387618, 1697480000)
