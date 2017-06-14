@@ -123,9 +123,11 @@ func purgeMetric(c *cli.Context) error {
 		for _, cell := range row.Cells {
 			_, ts := parseKey(cell.Row)
 
-			err = deleteKey(string(cell.Row))
-			if err != nil {
-				return cli.NewExitError("Error deleting row: "+err.Error(), -1)
+			if !c.Bool("noop") {
+				err = deleteKey(string(cell.Row))
+				if err != nil {
+					return cli.NewExitError("Error deleting row: "+err.Error(), -1)
+				}
 			}
 			i++
 			fmt.Printf("\r%d rows deleted. Up to %s", i, ts)
