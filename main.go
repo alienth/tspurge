@@ -4,9 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/hex"
+	// "encoding/hex"
 	"fmt"
 	"io"
+	"os"
 
 	"github.com/tsuna/gohbase"
 	// "github.com/tsuna/gohbase/filter"
@@ -16,10 +17,10 @@ import (
 var client gohbase.Client
 
 func main() {
-	client = gohbase.NewClient("ny-tsdb01")
+	client = gohbase.NewClient(os.Args[1])
 	getMetrics()
 
-	startKey, stopKey := getRangeKeys("os.net.bytes", 1497387618, 1497480000)
+	startKey, stopKey := getRangeKeys("test", 1497387618, 1697480000)
 
 	// pFilter := filter.NewPrefixFilter([]byte("0"))
 	// family := map[string][]string{"cf": []string{"t"}}
@@ -34,7 +35,7 @@ func main() {
 			break
 		}
 		for _, cell := range row.Cells {
-			fmt.Println(hex.Dump(cell.Row))
+			delete(string(cell.Row))
 		}
 	}
 
@@ -43,6 +44,18 @@ func main() {
 var metrics map[string][]byte = make(map[string][]byte)
 var tagks map[string][]byte = make(map[string][]byte)
 var tagvs map[string][]byte = make(map[string][]byte)
+
+func delete(key string) {
+	deleteRequest, err := hrpc.NewDelStr(context.Background(), "tsdb", key, nil)
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	_, err = client.Delete(deleteRequest)
+	if err != nil {
+		fmt.Println(err)
+	}
+}
 
 func getMetrics() {
 	family := map[string][]string{"name": []string{"metrics", "tagk", "tagv"}}
