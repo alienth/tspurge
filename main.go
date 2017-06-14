@@ -22,11 +22,11 @@ func main() {
 	app.Name = "tspurge"
 
 	app.Flags = []cli.Flag{
-		cli.StringFlag{
+		cli.IntFlag{
 			Name:  "start, s",
 			Usage: "Start time to delete metrics, in unix epoch time. Will be rounded down to the nearest hour.",
 		},
-		cli.StringFlag{
+		cli.IntFlag{
 			Name:  "end, e",
 			Usage: "End time to delete metrics, in unix epoch time. Will be rounded up to the nearest hour.",
 		},
@@ -38,19 +38,34 @@ func main() {
 			Name:  "noop, n",
 			Usage: "Run in no-op mode. Iterate through all of the rows, but don't actually delete them.",
 		},
+		cli.BoolFlag{
+			Name:  "help, h",
+			Usage: "show help",
+		},
 	}
 
 	app.Before = func(c *cli.Context) error {
+		if c.Bool("help") {
+			cli.ShowAppHelp(c)
+			os.Exit(-1)
+		}
 		if c.String("start") == "" {
-			return cli.NewExitError("Error: you must specify start timestamp", -1)
+			return cli.NewExitError("Error: you must specify start timestamp, e.g. --start 1490000000", -1)
 		}
 		if c.String("end") == "" {
-			return cli.NewExitError("Error: you must specify start timestamp", -1)
+			return cli.NewExitError("Error: you must specify end timestamp, e.g. --end 1490000000", -1)
+		}
+		if c.String("host") == "" {
+			return cli.NewExitError("Error: you must specify hbase host, e.g. --host hbasehost.local", -1)
+		}
+		if !c.Args().Present() {
+			return cli.NewExitError("Error: you must specify at least one metric", -1)
 		}
 		return nil
 	}
 
 	app.ArgsUsage = "<METRIC_NAME>..."
+	app.HideHelp = true
 
 	app.Action = purgeMetric
 
@@ -61,11 +76,11 @@ func main() {
 
 }
 
-func purgeMetric(c *cli.Context) {
+func purgeMetric(c *cli.Context) error {
 	client = gohbase.NewClient(c.String("host"))
 	getMetrics()
 
-	startKey, stopKey := getRangeKeys("test", 1497387618, 1697480000)
+	startKey, stopKey := getRangeKeys(c.Args().Get(0), c.Int("start"), c.Int("end"))
 
 	// pFilter := filter.NewPrefixFilter([]byte("0"))
 	// family := map[string][]string{"cf": []string{"t"}}
@@ -80,26 +95,31 @@ func purgeMetric(c *cli.Context) {
 			break
 		}
 		for _, cell := range row.Cells {
-			delete(string(cell.Row))
+			err = deleteKey(string(cell.Row))
+			if err != nil {
+				return cli.NewExitError("Error deleting row: "+err.Error(), -1)
+			}
 		}
 	}
 
+	return nil
 }
 
 var metrics map[string][]byte = make(map[string][]byte)
 var tagks map[string][]byte = make(map[string][]byte)
 var tagvs map[string][]byte = make(map[string][]byte)
 
-func delete(key string) {
+func deleteKey(key string) error {
 	deleteRequest, err := hrpc.NewDelStr(context.Background(), "tsdb", key, nil)
 	if err != nil {
-		fmt.Println(err)
+		return err
 	}
 
 	_, err = client.Delete(deleteRequest)
 	if err != nil {
-		fmt.Println(err)
+		return err
 	}
+	return nil
 }
 
 func getMetrics() {
@@ -125,9 +145,6 @@ func getMetrics() {
 
 			}
 		}
-	}
-	for k, _ := range metrics {
-		fmt.Println(k)
 	}
 }
 
