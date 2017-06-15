@@ -120,6 +120,9 @@ func purgeMetric(c *cli.Context) error {
 		if err == io.EOF {
 			break
 		}
+		if row == nil {
+			continue
+		}
 		for _, cell := range row.Cells {
 			_, ts := parseKey(cell.Row)
 
