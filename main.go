@@ -45,6 +45,10 @@ func main() {
 			Name:  "help, h",
 			Usage: "show help",
 		},
+		cli.BoolFlag{
+			Name:  "assume-yes, y",
+			Usage: "Assume 'yes' response for all prompts. Use if running non-interactively.",
+		},
 	}
 
 	app.Before = func(c *cli.Context) error {
@@ -96,12 +100,14 @@ func purgeMetric(c *cli.Context) error {
 	startKey, endKey := getRangeKeys(metricId, startTs, endTs)
 
 	question := fmt.Sprintf("Will delete all datapoints for metric %s from %s to %s. Confirm?", metric, startBase, endBase)
-	proceed, err := prompt(question)
-	if err != nil {
-		return cli.NewExitError(err, -1)
-	}
-	if !proceed {
-		return cli.NewExitError("Aborting.", -1)
+	if !c.Bool("assume-yes") {
+		proceed, err := prompt(question)
+		if err != nil {
+			return cli.NewExitError(err, -1)
+		}
+		if !proceed {
+			return cli.NewExitError("Aborting.", -1)
+		}
 	}
 
 	// pFilter := filter.NewPrefixFilter([]byte("0"))
